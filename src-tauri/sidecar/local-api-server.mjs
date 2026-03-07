@@ -367,10 +367,17 @@ function toHeaders(nodeHeaders, options = {}) {
 async function proxyToCloud(requestUrl, req, remoteBase) {
   const target = `${remoteBase}${requestUrl.pathname}${requestUrl.search}`;
   const body = ['GET', 'HEAD'].includes(req.method) ? undefined : await readBody(req);
+  const headers = toHeaders(req.headers, { stripOrigin: true });
+  // Never forward local sidecar/session credentials to cloud fallback.
+  // LOCAL_API_TOKEN is carried in Authorization, and cookies may include
+  // host-local session state that is irrelevant (and sensitive) upstream.
+  headers.delete('authorization');
+  headers.delete('cookie');
+  headers.delete('proxy-authorization');
   return fetch(target, {
     method: req.method,
     // Strip browser-origin headers for server-to-server parity.
-    headers: toHeaders(req.headers, { stripOrigin: true }),
+    headers,
     body,
   });
 }
