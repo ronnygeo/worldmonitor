@@ -90,10 +90,14 @@ function mockHttpsRequestOnce({ statusCode, headers, body }) {
 async function setupRemoteServer() {
   const hits = [];
   const origins = [];
+  const authorizations = [];
+  const cookies = [];
   const server = createServer((req, res) => {
     const url = new URL(req.url || '/', 'http://127.0.0.1');
     hits.push(url.pathname);
     origins.push(req.headers.origin || null);
+    authorizations.push(req.headers.authorization || null);
+    cookies.push(req.headers.cookie || null);
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({
       source: 'remote',
@@ -106,6 +110,8 @@ async function setupRemoteServer() {
   return {
     hits,
     origins,
+    authorizations,
+    cookies,
     remoteBase: `http://127.0.0.1:${port}`,
     async close() {
       await new Promise((resolve, reject) => {
@@ -352,6 +358,7 @@ test('strips browser origin headers before invoking local handlers', async () =>
         return new Response(JSON.stringify({
           source: 'local',
           originPresent: Boolean(origin),
+          originValue: origin,
         }), {
           status: 200,
           headers: { 'content-type': 'application/json' }
@@ -375,7 +382,10 @@ test('strips browser origin headers before invoking local handlers', async () =>
     assert.equal(response.status, 200);
     const body = await response.json();
     assert.equal(body.source, 'local');
-    assert.equal(body.originPresent, false);
+    // Caller-supplied origin is stripped; sidecar injects an internal origin.
+    assert.equal(body.originPresent, true);
+    assert.notEqual(body.originValue, 'https://tauri.localhost');
+    assert.equal(String(body.originValue).startsWith('http://127.0.0.1:'), true);
     assert.equal(remote.hits.length, 0);
   } finally {
     await app.close();
@@ -509,13 +519,19 @@ test('strips browser origin headers when proxying to cloud fallback (cloudFallba
 
   try {
     const response = await fetch(`http://127.0.0.1:${port}/api/no-local-handler`, {
-      headers: { Origin: 'https://tauri.localhost' },
+      headers: {
+        Origin: 'https://tauri.localhost',
+        Authorization: 'Bearer local-sidecar-token',
+        Cookie: 'session=abc123',
+      },
     });
     assert.equal(response.status, 200);
     const body = await response.json();
     assert.equal(body.source, 'remote');
     assert.equal(body.origin, null);
     assert.equal(remote.origins[0], null);
+    assert.equal(remote.authorizations[0], null);
+    assert.equal(remote.cookies[0], null);
   } finally {
     await app.close();
     await localApi.cleanup();
